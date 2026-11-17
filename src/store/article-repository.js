@@ -16,14 +16,18 @@ export class ArticleRepository {
     this.markMissing = database.prepare(`UPDATE articles SET missing_streak=missing_streak+1,
       visibility=CASE WHEN missing_streak+1 >= ? THEN 'quiet' ELSE visibility END
       WHERE feed_id=? AND last_seen_at < ? AND visibility='visible'`);
-    this.listArticles = database.prepare(`SELECT article_id, feed_id, canonical_url, title, published_at,
-      first_seen_at, last_seen_at, seen_count, missing_streak, visibility, review_state
-      FROM articles WHERE feed_id=? AND (? IS NULL OR visibility=?)
-      ORDER BY COALESCE(published_at, last_seen_at) DESC, article_id DESC LIMIT ? OFFSET ?`);
+    this.listArticles = database.prepare(`SELECT a.article_id, a.feed_id, a.canonical_url, a.title, a.published_at,
+      a.first_seen_at, a.last_seen_at, a.seen_count, a.missing_streak, a.visibility, a.review_state,
+      s.article_key AS source_key, s.version AS source_version, s.deleted AS source_deleted
+      FROM articles a LEFT JOIN article_sources s ON s.article_id=a.article_id
+      WHERE a.feed_id=? AND (? IS NULL OR a.visibility=?)
+      ORDER BY COALESCE(a.published_at, a.last_seen_at) DESC, a.article_id DESC LIMIT ? OFFSET ?`);
     this.countByVisibility = database.prepare(`SELECT visibility, COUNT(*) AS count FROM articles
       WHERE feed_id=? GROUP BY visibility`);
     this.total = database.prepare("SELECT COUNT(*) AS count FROM articles WHERE feed_id=?");
-    this.byUrl = database.prepare("SELECT * FROM articles WHERE feed_id=? AND canonical_url=?");
+    this.byUrl = database.prepare(`SELECT a.*, s.article_key AS source_key, s.version AS source_version,
+      s.deleted AS source_deleted FROM articles a LEFT JOIN article_sources s ON s.article_id=a.article_id
+      WHERE a.feed_id=? AND a.canonical_url=?`);
     this.captureArticles = database.prepare(`SELECT a.article_id, a.feed_id, a.canonical_url, a.title,
       a.published_at, a.first_seen_at, a.last_seen_at, a.seen_count, a.missing_streak, a.visibility,
       ci.source_index FROM capture_items ci JOIN articles a ON a.article_id=ci.article_id
@@ -85,6 +89,9 @@ function mapArticle(row) {
     missingStreak: row.missing_streak,
     visibility: row.visibility,
     sourceIndex: row.source_index ?? null,
-    reviewState: row.review_state ?? "unreviewed"
+    reviewState: row.review_state ?? "unreviewed",
+    sourceKey: row.source_key ?? null,
+    sourceVersion: row.source_version ?? null,
+    sourceDeleted: row.source_deleted === null || row.source_deleted === undefined ? null : Boolean(row.source_deleted)
   };
 }

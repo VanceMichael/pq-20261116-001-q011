@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function openDatabase(filename) {
   const path = resolve(filename);
@@ -16,7 +16,11 @@ export function openDatabase(filename) {
 export function migrate(database) {
   const version = database.prepare("PRAGMA user_version").get().user_version;
   if (version > SCHEMA_VERSION) throw new Error(`database schema ${version} is newer than supported ${SCHEMA_VERSION}`);
-  if (version === SCHEMA_VERSION) return;
+  if (version < 1) migrateToV1(database);
+  if (version < 2) migrateToV2(database);
+}
+
+function migrateToV1(database) {
   database.exec(`
     BEGIN IMMEDIATE;
     CREATE TABLE IF NOT EXISTS feeds (
@@ -93,6 +97,59 @@ export function migrate(database) {
     );
     CREATE INDEX IF NOT EXISTS review_events_article_time ON review_events(article_id, event_id DESC);
     PRAGMA user_version = 1;
+    COMMIT;
+  `);
+}
+
+function migrateToV2(database) {
+  database.exec(`
+    BEGIN IMMEDIATE;
+    ALTER TABLE feeds ADD COLUMN kind TEXT NOT NULL DEFAULT 'html' CHECK(kind IN ('html', 'json'));
+    CREATE TABLE IF NOT EXISTS feed_cursors (
+      feed_id TEXT PRIMARY KEY REFERENCES feeds(feed_id),
+      cursor TEXT,
+      max_version INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS feed_events (
+      event_id INTEGER PRIMARY KEY,
+      feed_id TEXT NOT NULL REFERENCES feeds(feed_id),
+      article_key TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      op TEXT NOT NULL CHECK(op IN ('upsert', 'delete')),
+      payload_json TEXT,
+      cursor TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('applied', 'stale', 'invalid', 'unknown_key', 'conflict')),
+      received_at TEXT NOT NULL,
+      UNIQUE(feed_id, article_key, version, op)
+    );
+    CREATE INDEX IF NOT EXISTS feed_events_feed_time ON feed_events(feed_id, event_id DESC);
+    CREATE TABLE IF NOT EXISTS article_sources (
+      feed_id TEXT NOT NULL REFERENCES feeds(feed_id),
+      article_key TEXT NOT NULL,
+      article_id INTEGER NOT NULL REFERENCES articles(article_id),
+      version INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(feed_id, article_key),
+      UNIQUE(article_id)
+    );
+    CREATE TABLE IF NOT EXISTS sync_runs (
+      run_id INTEGER PRIMARY KEY,
+      feed_id TEXT NOT NULL REFERENCES feeds(feed_id),
+      kind TEXT NOT NULL CHECK(kind IN ('events', 'alignment')),
+      started_at TEXT NOT NULL,
+      finished_at TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('completed', 'failed')),
+      stats_json TEXT NOT NULL DEFAULT '{}',
+      watermark_version INTEGER,
+      cursor_before TEXT,
+      cursor_after TEXT,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS sync_runs_feed_time ON sync_runs(feed_id, run_id DESC);
+    PRAGMA user_version = 2;
     COMMIT;
   `);
 }

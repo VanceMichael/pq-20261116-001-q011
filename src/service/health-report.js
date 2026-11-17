@@ -2,9 +2,10 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
 const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
 
 export class HealthReportService {
-  constructor({ feeds, fetches, clock = () => new Date() }) {
+  constructor({ feeds, fetches, syncs = null, clock = () => new Date() }) {
     this.feeds = feeds;
     this.fetches = fetches;
+    this.syncs = syncs;
     this.clock = clock;
   }
 
@@ -12,7 +13,11 @@ export class HealthReportService {
     const feed = this.feeds.get(feedId);
     if (!feed) return null;
     const now = this.clock();
-    const summary = this.fetches.summarySince(feedId, new Date(now.getTime() - WINDOW_MS).toISOString());
+    const since = new Date(now.getTime() - WINDOW_MS).toISOString();
+    // JSON feeds are judged by their sync/alignment runs, HTML feeds by fetch attempts.
+    const summary = feed.kind === "json" && this.syncs
+      ? this.syncs.summarySince(feedId, since)
+      : this.fetches.summarySince(feedId, since);
     const lastSuccess = summary.lastSuccessAt ? Date.parse(summary.lastSuccessAt) : null;
     const ageMs = lastSuccess === null ? null : Math.max(0, now.getTime() - lastSuccess);
     const issues = diagnose(summary, ageMs);

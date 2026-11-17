@@ -2,8 +2,8 @@ export class FeedRepository {
   constructor(database) {
     this.database = database;
     this.insertFeed = database.prepare(`INSERT INTO feeds
-      (feed_id, base_url, allowed_hosts_json, minimum_items, missing_threshold, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (feed_id, base_url, allowed_hosts_json, minimum_items, missing_threshold, kind, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(feed_id) DO UPDATE SET base_url=excluded.base_url,
       allowed_hosts_json=excluded.allowed_hosts_json, minimum_items=excluded.minimum_items,
       missing_threshold=excluded.missing_threshold, updated_at=excluded.updated_at`);
@@ -13,8 +13,13 @@ export class FeedRepository {
       WHERE feed_id=?`);
   }
 
-  register({ feedId, baseUrl, allowedHosts = [], minimumItems = 3, missingThreshold = 3 }, now) {
+  register({ feedId, baseUrl, allowedHosts = [], minimumItems = 3, missingThreshold = 3, kind = "html" }, now) {
     validateFeedId(feedId);
+    if (!new Set(["html", "json"]).has(kind)) throw new TypeError("kind must be html or json");
+    const existing = this.get(feedId);
+    if (existing && existing.kind !== kind) {
+      throw Object.assign(new Error(`feed ${feedId} is already registered as kind ${existing.kind}`), { statusCode: 409 });
+    }
     const base = new URL(baseUrl);
     if (!new Set(["http:", "https:"]).has(base.protocol)) throw new TypeError("feed base URL must use HTTP or HTTPS");
     if (base.username || base.password) throw new TypeError("feed base URL cannot contain credentials");
@@ -31,7 +36,7 @@ export class FeedRepository {
     if (!hosts.some((host) => base.hostname === host || base.hostname.endsWith(`.${host}`))) {
       throw new TypeError("feed base host must be included in allowedHosts");
     }
-    this.insertFeed.run(feedId, base.href, JSON.stringify(hosts), minimumItems, missingThreshold, now, now);
+    this.insertFeed.run(feedId, base.href, JSON.stringify(hosts), minimumItems, missingThreshold, kind, now, now);
     return this.get(feedId);
   }
 
@@ -62,6 +67,7 @@ function mapFeed(row) {
     allowedHosts: JSON.parse(row.allowed_hosts_json),
     minimumItems: row.minimum_items,
     missingThreshold: row.missing_threshold,
+    kind: row.kind ?? "html",
     lastAcceptedAt: row.last_accepted_at,
     lastItemCount: row.last_item_count,
     createdAt: row.created_at,

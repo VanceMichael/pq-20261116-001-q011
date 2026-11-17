@@ -59,6 +59,26 @@ async function routeRequest(request, response, archive) {
     const status = result.outcome === "accepted" ? result.capture.replay ? 200 : 202 : result.outcome === "not_modified" ? 200 : 422;
     return writeJson(response, status, result);
   }
+  if (segments.length === 4 && segments[3] === "events" && request.method === "POST") {
+    const result = archive.ingestEvents(feedId, await readJson(request));
+    return writeJson(response, 200, result);
+  }
+  if (segments.length === 4 && segments[3] === "events" && request.method === "GET") {
+    const result = archive.listEvents(feedId, url.searchParams.get("limit"));
+    return result ? writeJson(response, 200, { events: result }) : notFound(response);
+  }
+  if (segments.length === 4 && segments[3] === "alignment" && request.method === "POST") {
+    const result = archive.alignCatalog(feedId, await readJson(request));
+    return writeJson(response, 200, result);
+  }
+  if (segments.length === 4 && segments[3] === "sync" && request.method === "POST") {
+    const result = await archive.syncFeed(feedId);
+    return writeJson(response, 200, result);
+  }
+  if (segments.length === 4 && segments[3] === "syncs" && request.method === "GET") {
+    const result = archive.listSyncs(feedId, url.searchParams.get("limit"));
+    return result ? writeJson(response, 200, { syncs: result }) : notFound(response);
+  }
   if (segments.length === 3 && request.method === "GET") {
     const result = archive.feedStatus(feedId);
     return result ? writeJson(response, 200, result) : notFound(response);

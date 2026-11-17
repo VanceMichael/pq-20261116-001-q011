@@ -3,16 +3,18 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { NewsArchive } from "./service/archive.js";
+import { SyntheticJsonSource } from "./ingest/synthetic-json-source.js";
 import { createHttpServer } from "./http/server.js";
 
 export async function main(args = process.argv.slice(2), env = process.env) {
   const [command, ...parameters] = args;
   if (command === "demo") return runDemo(parameters[0] ?? "fixtures/rolling-feed.html");
+  if (command === "demo-json") return runJsonDemo();
   if (command === "serve") return runServer(env);
   if (new Set(["import", "inspect", "health", "changes", "export", "audit"]).has(command)) {
     return runArchiveCommand(command, parameters, env);
   }
-  throw new Error("usage: node --experimental-sqlite src/cli.js <demo [html-file] | serve | import <feed> <html> | inspect|health|changes <feed> | export <feed> | audit>");
+  throw new Error("usage: node --experimental-sqlite src/cli.js <demo [html-file] | demo-json | serve | import <feed> <html> | inspect|health|changes <feed> | export <feed> | audit>");
 }
 
 async function runDemo(filename) {
@@ -37,8 +39,47 @@ async function runDemo(filename) {
   }
 }
 
-async function runArchiveCommand(command, parameters, env) {
-  const [feedId, filename, capturedAt] = parameters;
+async function runJsonDemo() {
+  const directory = await mkdtemp(join(tmpdir(), "rolling-news-json-demo-"));
+  const databasePath = join(directory, "archive.sqlite");
+  const source = new SyntheticJsonSource();
+  const archive = new NewsArchive(databasePath, { sourceClient: source });
+  try {
+    archive.registerFeed({
+      feedId: "wire-json",
+      kind: "json",
+      baseUrl: "https://wire.example.test/api/",
+      allowedHosts: ["wire.example.test"],
+      minimumItems: 1
+    });
+    source.publish("story-1", { url: "https://wire.example.test/2026/11-17/story-1.shtml", title: "增量接口上线" });
+    source.publish("story-2", { url: "https://wire.example.test/2026/11-17/story-2.shtml", title: "本地交通调整" });
+    const first = await archive.syncFeed("wire-json");
+    source.retract("story-1");
+    source.publish("story-3", { url: "https://wire.example.test/2026/11-17/story-3.shtml", title: "夜间天气提示" });
+    source.redeliverCount = 2; // the interface re-sends already-read events
+    const second = await archive.syncFeed("wire-json");
+    source.resyncRequested = true; // the interface demands a full re-alignment
+    const third = await archive.syncFeed("wire-json");
+    const status = archive.feedStatus("wire-json");
+    process.stdout.write(`${JSON.stringify({
+      syncs: [first, second, third].map((run) => ({
+        outcome: run.outcome, batches: run.batches, resyncs: run.resyncs, counts: run.counts
+      })),
+      cursor: status.sync,
+      statistics: status.statistics,
+      items: archive.listItems("wire-json").items.map((item) => ({
+        key: item.sourceKey, title: item.title, visibility: item.visibility, sourceDeleted: item.sourceDeleted
+      }))
+    }, null, 2)}\n`);
+    return 0;
+  } finally {
+    archive.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runArchiveCommand(command, parameters, env) {  const [feedId, filename, capturedAt] = parameters;
   if (command === "audit") {
     const archive = new NewsArchive(env.ARCHIVE_DB ?? "./var/archive.sqlite");
     try {

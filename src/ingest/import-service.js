@@ -16,6 +16,9 @@ export class ImportService {
     validateFeedId(feedId);
     const feed = this.feeds.get(feedId);
     if (!feed) throw new Error(`unknown feed: ${feedId}`);
+    if (feed.kind !== "html") {
+      throw Object.assign(new Error(`feed ${feedId} is a JSON feed; HTML snapshots are not accepted for it`), { statusCode: 409 });
+    }
     const capturedAt = validateCapturedAt(capturedAtValue, this.clock());
     const fingerprint = pageFingerprint(html);
     const previous = this.captures.findByFingerprint(feedId, fingerprint);

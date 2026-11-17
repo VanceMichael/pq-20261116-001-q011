@@ -21,6 +21,9 @@ export class RefreshService {
   async perform(feedId) {
     const feed = this.feeds.get(feedId);
     if (!feed) throw new Error(`unknown feed: ${feedId}`);
+    if (feed.kind !== "html") {
+      throw Object.assign(new Error(`feed ${feedId} is a JSON feed; use sync instead of refresh`), { statusCode: 409 });
+    }
     const startedAt = this.clock().toISOString();
     try {
       const fetched = await this.fetcher.fetchFeed(feed);

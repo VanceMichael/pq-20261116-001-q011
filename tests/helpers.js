@@ -43,6 +43,24 @@ export const baseFeed = {
   missingThreshold: 3
 };
 
+export const jsonFeed = {
+  feedId: "wire-json",
+  kind: "json",
+  baseUrl: "https://wire.example.test/api/",
+  allowedHosts: ["wire.example.test"],
+  minimumItems: 1,
+  missingThreshold: 3
+};
+
+export function jsonArticle(id, overrides = {}) {
+  return {
+    url: `https://wire.example.test/2026/11-17/story-${id}.shtml`,
+    title: `快讯${id}`,
+    publishedAt: `2026-11-17T0${Math.min(id, 9)}:00:00+08:00`,
+    ...overrides
+  };
+}
+
 export function captureTime(second) {
   return `2026-11-16T02:00:${String(second).padStart(2, "0")}.000Z`;
 }

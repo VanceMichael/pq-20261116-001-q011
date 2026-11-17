@@ -9,13 +9,25 @@ export class IntegrityAuditService {
       WHERE c.accepted=1 GROUP BY c.capture_id HAVING c.normalized_count != linked_count`);
     this.articleCountMismatches = database.prepare(`SELECT a.article_id, a.seen_count,
       COUNT(ci.capture_id) AS observed_count FROM articles a
+      JOIN feeds f ON f.feed_id=a.feed_id AND f.kind='html'
       LEFT JOIN capture_items ci ON ci.article_id=a.article_id
       GROUP BY a.article_id HAVING a.seen_count != observed_count`);
     this.feedWatermarkMismatches = database.prepare(`SELECT f.feed_id, f.last_accepted_at, f.last_item_count,
       c.captured_at AS expected_at, c.normalized_count AS expected_count
       FROM feeds f LEFT JOIN captures c ON c.capture_id=(
         SELECT capture_id FROM captures WHERE feed_id=f.feed_id AND accepted=1 ORDER BY capture_id DESC LIMIT 1
-      ) WHERE (f.last_accepted_at IS NOT c.captured_at) OR (f.last_item_count != COALESCE(c.normalized_count, 0))`);
+      ) WHERE f.kind='html' AND ((f.last_accepted_at IS NOT c.captured_at) OR (f.last_item_count != COALESCE(c.normalized_count, 0)))`);
+    this.cursorVersionMismatches = database.prepare(`SELECT c.feed_id, c.max_version,
+      MAX(e.version) AS logged_max FROM feed_cursors c
+      JOIN feed_events e ON e.feed_id=c.feed_id
+      GROUP BY c.feed_id HAVING c.max_version < logged_max`);
+    this.unlinkedSourceArticles = database.prepare(`SELECT a.article_id, a.canonical_url FROM articles a
+      JOIN feeds f ON f.feed_id=a.feed_id AND f.kind='json'
+      LEFT JOIN article_sources s ON s.article_id=a.article_id
+      WHERE s.article_key IS NULL`);
+    this.deletedVisibilityMismatches = database.prepare(`SELECT s.article_key, s.deleted, a.visibility
+      FROM article_sources s JOIN articles a ON a.article_id=s.article_id
+      WHERE s.deleted=1 AND a.visibility != 'quiet'`);
   }
 
   run() {
@@ -24,7 +36,10 @@ export class IntegrityAuditService {
       { name: "foreign_keys", rows: this.foreignKeyCheck.all() },
       { name: "capture_item_counts", rows: this.captureLinkMismatches.all() },
       { name: "article_observation_counts", rows: this.articleCountMismatches.all() },
-      { name: "feed_watermarks", rows: this.feedWatermarkMismatches.all() }
+      { name: "feed_watermarks", rows: this.feedWatermarkMismatches.all() },
+      { name: "json_cursor_versions", rows: this.cursorVersionMismatches.all() },
+      { name: "json_source_links", rows: this.unlinkedSourceArticles.all() },
+      { name: "json_deleted_visibility", rows: this.deletedVisibilityMismatches.all() }
     ].map((check) => ({
       name: check.name,
       passed: check.rows.length === 0,
